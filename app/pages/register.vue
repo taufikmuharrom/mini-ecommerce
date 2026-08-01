@@ -55,7 +55,7 @@ async function onSubmit(event: FormSubmitEvent<Schema>) {
     return;
   }
 
-  navigateTo("/");
+  navigateTo("/profile");
 }
 </script>
 

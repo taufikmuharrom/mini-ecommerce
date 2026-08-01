@@ -12,7 +12,8 @@
     "db:studio": "drizzle-kit studio",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:seed": "tsx server/database/seed.ts"
+    "db:seed": "tsx server/database/seed.ts",
+    "db:reset-admin": "tsx server/database/reset-admin-password.ts"
   },
   "dependencies": {
     "@iconify-json/lucide": "^1.2.117",
