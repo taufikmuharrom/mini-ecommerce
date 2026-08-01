@@ -6,10 +6,6 @@ import type { FormSubmitEvent, AuthFormField } from "@nuxt/ui";
 const errorMsg = ref("");
 const loading = ref(false);
 
-const session = authClient.useSession();
-
-const isAdmin = computed(() => session.data.user?.role);
-
 const fields: AuthFormField[] = [
   {
     name: "email",
@@ -50,7 +46,8 @@ async function onSubmit(event: FormSubmitEvent<Schema>) {
     return;
   }
 
-  isAdmin.value ? navigateTo("/admin") : navigateTo("/profile");
+  const { data: sessionData } = await authClient.getSession();
+  navigateTo(sessionData?.user.role === "admin" ? "/admin" : "/profile");
 }
 </script>
 
