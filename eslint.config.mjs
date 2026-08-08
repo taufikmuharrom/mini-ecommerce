@@ -24,7 +24,7 @@ export default withNuxt(
       'vue/html-closing-bracket-newline': 'off',
       '@stylistic/arrow-parens': 'off',
       'arrow-parens': 'off',
-      "vue/singleline-html-element-content-newline:'off'"
+      'vue/singleline-html-element-content-newline': 'off'
     }
   }
 )

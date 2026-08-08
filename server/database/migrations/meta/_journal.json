@@ -8,6 +8,27 @@
       "when": 1785074984622,
       "tag": "0000_stiff_black_cat",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785555795453,
+      "tag": "0001_curly_mole_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785559939875,
+      "tag": "0002_futuristic_sue_storm",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786147790377,
+      "tag": "0003_amazing_madripoor",
+      "breakpoints": true
     }
   ]
 }

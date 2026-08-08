@@ -41,7 +41,7 @@ async function handleLogout() {
             color="error"
           />
           <UButton label="Profile" to="/profile" variant="ghost" />
-          <UButton label="Logout" @click="handleLogout" variant="outline" />
+          <UButton label="Logout" variant="outline" @click="handleLogout" />
         </template>
         <template v-else>
           <UButton label="Login" to="/login" variant="ghost" />
