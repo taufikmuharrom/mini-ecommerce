@@ -57,6 +57,8 @@ async function onSubmit(event: FormSubmitEvent<Schema>) {
 
   navigateTo("/profile");
 }
+
+const product_type = ref<"baju" | "celana" | "sepatu">("baju");
 </script>
 
 <template>

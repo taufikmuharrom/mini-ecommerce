@@ -60,6 +60,10 @@ async function resetAdminPassword() {
   }
 
   const adminUser = existingUsers[0];
+  if (!adminUser) {
+    console.error("Admin user not found:", adminEmail);
+    process.exit(1);
+  }
 
   // Hash password baru
   const hashedPassword = await hashPassword(adminPassword);

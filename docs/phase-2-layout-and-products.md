@@ -878,6 +878,348 @@ Jadi kalau kamu sudah punya endpoint admin, cara menjadikannya public bukan deng
 
 ---
 
+## 5.6 Cloudflare R2 Setup untuk Upload Foto Produk
+
+Saat ini kolom `imageUrl` menyimpan URL gambar. Agar admin bisa meng-upload foto produk sendiri (bukan hanya menyalin URL), kita gunakan **Cloudflare R2** sebagai object storage. R2 kompatibel dengan S3, jadi kita bisa pakai AWS SDK v3.
+
+### 5.6.1 Kenapa R2?
+
+- **S3-compatible**: tidak perlu belajar API baru; cukup ganti endpoint dan credential.
+- **Murah & tanpa egress fee** untuk traffic keluar (bandwidth) yang besar.
+- **Public URL**: gambar yang di-upload bisa langsung diakses via URL publik atau custom domain.
+
+### 5.6.2 Buat bucket dan API token di Cloudflare
+
+1. Login ke [Cloudflare Dashboard](https://dash.cloudflare.com) → R2.
+2. Klik **Create bucket**, beri nama bucket (misal `minishop-uploads`).
+3. Buka bucket → tab **Settings** → aktifkan **Allow Public Access** (atau hubungkan custom domain) supaya gambar bisa diakses publik.
+4. Ke **R2 → Manage API tokens → Create API token**.
+   - Permissions: **Object Read & Write** untuk bucket tersebut.
+   - Simpan **Access Key ID** dan **Secret Access Key**.
+5. Catat **Account ID** Cloudflare (bisa dilihat di sidebar kanan dashboard R2).
+
+### 5.6.3 Tambahkan environment variables
+
+Tambahkan ke `.env` (dan `.env.example`):
+
+```env
+R2_ACCOUNT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+R2_ACCESS_KEY_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+R2_SECRET_ACCESS_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+R2_BUCKET_NAME=minishop-uploads
+R2_PUBLIC_URL=https://pub-<hash>.r2.dev
+```
+
+> `R2_PUBLIC_URL` adalah URL publik bucket. Bisa dari **Public R2.dev URL** Cloudflare atau custom domain yang sudah di-attach.
+
+Daftarkan juga di `nuxt.config.ts` agar bisa dibaca di server:
+
+```ts
+export default defineNuxtConfig({
+  // ...
+  runtimeConfig: {
+    r2AccountId: process.env.R2_ACCOUNT_ID,
+    r2AccessKeyId: process.env.R2_ACCESS_KEY_ID,
+    r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    r2BucketName: process.env.R2_BUCKET_NAME,
+    r2PublicUrl: process.env.R2_PUBLIC_URL,
+  },
+});
+```
+
+### 5.6.4 Install dependency AWS SDK
+
+```bash
+pnpm add -w @aws-sdk/client-s3
+```
+
+### 5.6.5 Utility R2 — `server/utils/r2.ts`
+
+Buat helper untuk inisialisasi S3 client, generate key unik, dan upload file:
+
+```ts
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+
+let _r2Client: S3Client | null = null;
+
+export function getR2Client(): S3Client {
+  if (_r2Client) return _r2Client;
+
+  const config = useRuntimeConfig();
+
+  const accountId = config.r2AccountId;
+  const accessKeyId = config.r2AccessKeyId;
+  const secretAccessKey = config.r2SecretAccessKey;
+
+  if (!accountId || !accessKeyId || !secretAccessKey) {
+    throw createError({
+      statusCode: 500,
+      statusMessage: "R2 credentials are not configured",
+    });
+  }
+
+  _r2Client = new S3Client({
+    region: "auto",
+    endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+    credentials: { accessKeyId, secretAccessKey },
+  });
+
+  return _r2Client;
+}
+
+export function generateImageKey(originalName: string): string {
+  const ext = originalName.split(".").pop() || "bin";
+  const safeExt = ext.replace(/[^a-zA-Z0-9]/g, "").toLowerCase() || "bin";
+  const id = crypto.randomUUID();
+  const timestamp = Date.now();
+  return `products/${timestamp}-${id}.${safeExt}`;
+}
+
+export async function uploadImageToR2(
+  buffer: Buffer,
+  key: string,
+  contentType: string,
+): Promise<string> {
+  const config = useRuntimeConfig();
+  const bucketName = config.r2BucketName;
+  const publicUrl = config.r2PublicUrl;
+
+  if (!bucketName) {
+    throw createError({
+      statusCode: 500,
+      statusMessage: "R2 bucket name is not configured",
+    });
+  }
+
+  const client = getR2Client();
+
+  await client.send(
+    new PutObjectCommand({
+      Bucket: bucketName,
+      Key: key,
+      Body: buffer,
+      ContentType: contentType,
+      ACL: "public-read",
+    }),
+  );
+
+  if (publicUrl) {
+    const base = publicUrl.endsWith("/") ? publicUrl.slice(0, -1) : publicUrl;
+    return `${base}/${key}`;
+  }
+
+  return `https://${bucketName}.r2.dev/${key}`;
+}
+```
+
+**Penjelasan singkat**
+
+- `region: "auto"` wajib untuk R2.
+- Endpoint mengikuti format `https://<account-id>.r2.cloudflarestorage.com`.
+- `generateImageKey` membuat nama file unik di folder `products/` supaya tidak bentrok dan mudah diorganisir.
+- `ACL: "public-read"` memastikan object bisa diakses publik kalau bucket mengizinkan public access.
+
+### 5.6.6 Endpoint upload gambar — `server/api/upload/image.post.ts`
+
+Endpoint ini khusus admin. Browser mengirim file sebagai `multipart/form-data`, server yang mengunggah ke R2 dan mengembalikan public URL.
+
+```ts
+import { requireAdmin } from "~~/server/utils/auth-guard";
+import { uploadImageToR2, generateImageKey } from "~~/server/utils/r2";
+
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+const ALLOWED_MIME_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+];
+
+export default defineEventHandler(async (event) => {
+  await requireAdmin(event);
+
+  const formData = await readMultipartFormData(event);
+  if (!formData) {
+    throw createError({ statusCode: 400, statusMessage: "No file uploaded" });
+  }
+
+  const file = formData.find((item) => item.name === "image");
+  if (!file || !file.data || file.data.length === 0) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: "Image file is required",
+    });
+  }
+
+  if (!ALLOWED_MIME_TYPES.includes(file.type || "")) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: `Invalid file type. Allowed: ${ALLOWED_MIME_TYPES.join(", ")}`,
+    });
+  }
+
+  if (file.data.length > MAX_FILE_SIZE) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: "File too large. Maximum size is 5 MB.",
+    });
+  }
+
+  const key = generateImageKey(file.filename || "image.bin");
+
+  try {
+    const url = await uploadImageToR2(
+      Buffer.from(file.data),
+      key,
+      file.type || "application/octet-stream",
+    );
+
+    return { url };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Upload failed";
+    throw createError({
+      statusCode: 500,
+      statusMessage: `Failed to upload image: ${message}`,
+    });
+  }
+});
+```
+
+**Kenapa tidak presigned URL?**
+
+- Presigned URL membuat browser upload langsung ke R2. Itu lebih hemat bandwidth server, tapi membutuhkan konfigurasi CORS di bucket dan lebih banyak setup.
+- Server-side upload seperti di atas lebih sederhana, credential R2 tidak pernah dikirim ke browser, dan tidak perlu CORS.
+
+### 5.6.7 Pola penggunaan di form product admin
+
+Upload gambar dan simpan URL-nya menjadi dua langkah:
+
+1. Admin memilih file di form.
+2. Form mengirim file ke `POST /api/upload/image`.
+3. Server upload ke R2 dan return URL.
+4. URL tersebut disimpan ke `state.imageUrl`, lalu form product dikirim seperti biasa ke `POST /api/products`.
+
+Contoh modifikasi pada form create/edit product:
+
+```vue
+<script setup lang="ts">
+const route = useRoute();
+const toast = useToast();
+const isEdit = computed(() => route.name !== "admin-products-new");
+const productId = route.params.id as string;
+
+const { data: categories } = await useFetch("/api/product-types");
+const { data: product } = await useFetch(`/api/products/${productId}`, {
+  immediate: isEdit.value,
+});
+
+const state = reactive({
+  name: product.value?.data?.name || "",
+  description: product.value?.data?.description || "",
+  price: product.value?.data?.price || 0,
+  stock: product.value?.data?.stock || 0,
+  imageUrl: product.value?.data?.imageUrl || "",
+  productTypeId: product.value?.data?.productType?.id || "",
+});
+
+const uploadingImage = ref(false);
+
+async function onImageSelect(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+
+  uploadingImage.value = true;
+
+  try {
+    const formData = new FormData();
+    formData.append("image", file);
+
+    const { url } = await $fetch("/api/upload/image", {
+      method: "POST",
+      body: formData,
+    });
+
+    state.imageUrl = url;
+    toast.add({ title: "Image uploaded", color: "success" });
+  } catch (err: any) {
+    toast.add({
+      title: err?.data?.statusMessage || "Image upload failed",
+      color: "error",
+    });
+  } finally {
+    uploadingImage.value = false;
+  }
+}
+
+async function onSubmit() {
+  const body = { ...state };
+
+  if (isEdit.value) {
+    await $fetch(`/api/products/${productId}`, { method: "PUT", body });
+  } else {
+    await $fetch("/api/products", { method: "POST", body });
+  }
+
+  navigateTo("/admin/products");
+}
+</script>
+
+<template>
+  <UCard class="max-w-2xl">
+    <template #header>
+      <h1 class="text-xl font-bold">
+        {{ isEdit ? "Edit" : "Create" }} Product
+      </h1>
+    </template>
+
+    <UForm :state="state" @submit="onSubmit" class="space-y-4">
+      <!-- ... field lainnya ... -->
+
+      <UFormField label="Product Image" name="imageUrl">
+        <div class="space-y-2 w-full">
+          <UInput
+            type="file"
+            accept="image/*"
+            :disabled="uploadingImage"
+            @change="onImageSelect"
+          />
+
+          <UInput
+            v-model="state.imageUrl"
+            placeholder="Image URL will appear here after upload"
+            class="w-full"
+            disabled
+          />
+
+          <img
+            v-if="state.imageUrl"
+            :src="state.imageUrl"
+            alt="Preview"
+            class="w-32 h-32 object-cover rounded-md border"
+          />
+        </div>
+      </UFormField>
+
+      <!-- ... field lainnya ... -->
+
+      <div class="flex justify-end gap-2 pt-4">
+        <UButton label="Cancel" variant="ghost" to="/admin/products" />
+        <UButton type="submit" label="Save" />
+      </div>
+    </UForm>
+  </UCard>
+</template>
+```
+
+**Catatan penting**
+
+- `imageUrl` yang disimpan di database adalah public URL dari R2.
+- Validasi tipe dan ukuran file ada di server. Validasi di frontend hanya UX, jangan dijadikan keamanan.
+- Jangan menyimpan credential R2 di browser atau mengirimkannya sebagai response.
+
+---
+
 ## 6. Private Admin API — CRUD Product
 
 Endpoint admin wajib diproteksi. Setiap handler dimulai dengan `await requireAdmin(event)`.
@@ -1429,6 +1771,252 @@ const qty = ref(1);
 
 function addToCart() {
   // Sementara alert saja; cart akan dibuat di phase berikutnya.
+  alert(`Added ${qty.value} of ${product.value?.name} to cart`);
+}
+</script>
+
+<template>
+  <div v-if="product" class="py-8">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+      <img
+        :src="product.imageUrl || 'https://placehold.co/600x400?text=No+Image'"
+        alt=""
+        class="w-full rounded-lg object-cover"
+      />
+
+      <div class="space-y-4">
+        <UBadge
+          v-if="product.productType"
+          :label="product.productType.name"
+          color="primary"
+        />
+        <h1 class="text-3xl font-bold">{{ product.name }}</h1>
+        <p class="text-2xl font-semibold">
+          Rp {{ product.price.toLocaleString("id-ID") }}
+        </p>
+        <p class="text-muted">{{ product.description }}</p>
+
+        <div class="flex items-center gap-4">
+          <UInputNumber v-model="qty" :min="1" :max="product.stock" />
+          <UButton
+            label="Add to Cart"
+            icon="i-lucide-shopping-cart"
+            :disabled="product.stock < 1"
+            @click="addToCart"
+          />
+        </div>
+
+        <p class="text-sm text-muted">Stock: {{ product.stock }}</p>
+      </div>
+    </div>
+  </div>
+
+  <div v-else class="py-10 text-center text-muted">Product not found.</div>
+</template>
+```
+
+---
+
+### 7.4 Update Halaman Home (Landing Page)
+
+Halaman `/` (`app/pages/index.vue`) diubah menjadi landing page lengkap dengan layout:
+
+```
+Hero (minimal 1 produk unggulan)
+Search & Filter
+List Produk
+Pagination
+```
+
+File: `app/pages/index.vue`
+
+```vue
+<script setup lang="ts">
+const route = useRoute();
+const router = useRouter();
+
+const page = ref(Number(route.query.page) || 1);
+const search = ref(String(route.query.q || ""));
+const selectedCategory = ref(String(route.query.category || ""));
+
+const { data: categories } = await useFetch("/api/product-types");
+
+const { data, pending } = await useFetch("/api/products", {
+  query: {
+    page,
+    q: search,
+    category: selectedCategory,
+    limit: 12,
+  },
+});
+
+const featuredProduct = computed(() => data.value?.data?.[0]);
+
+function applyFilter() {
+  page.value = 1;
+  router.push({
+    query: {
+      page: page.value,
+      q: search.value || undefined,
+      category: selectedCategory.value || undefined,
+    },
+  });
+}
+</script>
+
+<template>
+  <div class="py-8 space-y-10">
+    <!-- Hero -->
+    <section
+      v-if="featuredProduct"
+      class="relative rounded-2xl overflow-hidden bg-muted"
+    >
+      <div class="grid md:grid-cols-2 gap-6 p-8">
+        <img
+          :src="
+            featuredProduct.imageUrl || 'https://placehold.co/600x400?text=No+Image'
+          "
+          alt=""
+          class="w-full h-64 object-cover rounded-xl"
+        />
+
+        <div class="flex flex-col justify-center space-y-4">
+          <UBadge
+            v-if="featuredProduct.productType"
+            :label="featuredProduct.productType.name"
+          />
+          <h1 class="text-4xl font-bold">{{ featuredProduct.name }}</h1>
+          <p class="text-muted line-clamp-3">
+            {{ featuredProduct.description }}
+          </p>
+          <UButton
+            :to="`/product/${featuredProduct.slug}`"
+            label="View Product"
+          />
+        </div>
+      </div>
+    </section>
+
+    <!-- Search & Filter -->
+    <section class="flex flex-col sm:flex-row gap-4">
+      <UInput
+        v-model="search"
+        placeholder="Search product..."
+        icon="i-lucide-search"
+        class="sm:w-64"
+        @keyup.enter="applyFilter"
+      />
+      <USelect
+        v-model="selectedCategory"
+        :items="[
+          { label: 'All Categories', value: '' },
+          ...(categories?.data || []).map((c) => ({
+            label: c.name,
+            value: c.slug,
+          })),
+        ]"
+        class="sm:w-48"
+        @change="applyFilter"
+      />
+      <UButton label="Search" @click="applyFilter" />
+    </section>
+
+    <!-- Product List -->
+    <section>
+      <div v-if="pending" class="text-center py-10">Loading...</div>
+
+      <div
+        v-else-if="data?.data?.length"
+        class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6"
+      >
+        <NuxtLink
+          v-for="product in data.data"
+          :key="product.id"
+          :to="`/product/${product.slug}`"
+          class="group"
+        >
+          <UCard>
+            <img
+              :src="
+                product.imageUrl || 'https://placehold.co/400x300?text=No+Image'
+              "
+              alt=""
+              class="w-full h-48 object-cover rounded-md mb-4"
+            />
+            <h2 class="font-semibold group-hover:text-primary transition-colors">
+              {{ product.name }}
+            </h2>
+            <p class="text-sm text-muted line-clamp-2">
+              {{ product.description }}
+            </p>
+            <p class="font-bold mt-2">
+              Rp {{ product.price.toLocaleString("id-ID") }}
+            </p>
+          </UCard>
+        </NuxtLink>
+      </div>
+
+      <div v-else class="text-center py-10 text-muted">No products found.</div>
+    </section>
+
+    <!-- Pagination -->
+    <section
+      v-if="data?.meta?.totalPages > 1"
+      class="flex justify-center gap-2"
+    >
+      <UButton
+        label="Previous"
+        variant="ghost"
+        :disabled="page <= 1"
+        @click="
+          page--;
+          applyFilter();
+        "
+      />
+      <span class="self-center text-sm text-muted">
+        Page {{ page }} of {{ data.meta.totalPages }}
+      </span>
+      <UButton
+        label="Next"
+        variant="ghost"
+        :disabled="page >= data.meta.totalPages"
+        @click="
+          page++;
+          applyFilter();
+        "
+      />
+    </section>
+  </div>
+</template>
+```
+
+---
+
+### 7.5 Implementasi Halaman Product Detail
+
+Halaman detail produk berada di route `/product/:slug` (file `app/pages/product/[slug].vue`).
+
+Pastikan file route sudah benar. Kalau masih `app/pages/product/[id].vue`, rename dulu menjadi `[slug].vue`.
+
+```vue
+<script setup lang="ts">
+const route = useRoute();
+const slug = route.params.slug as string;
+
+const { data: response } = await useFetch(`/api/products/${slug}`);
+const product = computed(() => response.value?.data);
+
+const qty = ref(1);
+
+useSeoMeta({
+  title: product.value?.name
+    ? `${product.value.name} | MiniShop`
+    : "Product | MiniShop",
+  description: product.value?.description || "",
+});
+
+function addToCart() {
+  // Skeleton: fitur cart akan dibuat di phase 3
   alert(`Added ${qty.value} of ${product.value?.name} to cart`);
 }
 </script>
