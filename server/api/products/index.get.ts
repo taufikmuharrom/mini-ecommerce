@@ -1,5 +1,5 @@
 import { db } from "~~/server/database";
-import { product, productType } from "~~/server/database/schema";
+import { productList, productType } from "~~/server/database/schema";
 import { ilike, eq, and, count } from "drizzle-orm";
 import { z } from "zod";
 
@@ -17,37 +17,39 @@ export default defineEventHandler(async (event) => {
   const offset = (page - 1) * limit;
 
   const conditions = [];
-  if (q) conditions.push(ilike(product.name, `%${q}%`));
+  if (q) conditions.push(ilike(productList.name, `%${q}%`));
   if (category) conditions.push(eq(productType.slug, category));
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
   const products = await db
     .select({
-      id: product.id,
-      name: product.name,
-      slug: product.slug,
-      description: product.description,
-      price: product.price,
-      imageUrl: product.imageUrl,
-      createdAt: product.createdAt,
-      updatedAt: product.updatedAt,
+      id: productList.id,
+      name: productList.name,
+      slug: productList.slug,
+      description: productList.description,
+      price: productList.price,
+      stock: productList.stock,
+      imageUrl: productList.imageUrl,
+      createdAt: productList.createdAt,
+      updatedAt: productList.updatedAt,
       productType: {
         id: productType.id,
         name: productType.name,
+        slug: productType.slug,
       },
     })
-    .from(product)
-    .leftJoin(productType, eq(product.productType, productType.id))
+    .from(productList)
+    .leftJoin(productType, eq(productList.productTypeId, productType.id))
     .where(whereClause)
     .limit(limit)
     .offset(offset)
-    .orderBy(product.createdAt);
+    .orderBy(productList.createdAt);
 
   const [totalResult] = await db
     .select({ total: count() })
-    .from(product)
-    .leftJoin(productType, eq(product.productType, productType.id))
+    .from(productList)
+    .leftJoin(productType, eq(productList.productTypeId, productType.id))
     .where(whereClause);
 
   const total = totalResult?.total ?? 0;

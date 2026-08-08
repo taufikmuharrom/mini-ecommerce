@@ -81,14 +81,12 @@ export const verification = pgTable(
   (table) => [index("verification_identifier_idx").on(table.identifier)],
 );
 
-export const product = pgTable("product", {
-  id: text("id").primaryKey(),
+export const productType = pgTable("product_type", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
   name: text("name").notNull(),
-  description: text("description"),
   slug: text("slug").notNull().unique(),
-  price: integer("price").notNull(),
-  imageUrl: text("image_url"),
-  productType: text("product_type").references(() => productType.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()
@@ -97,10 +95,17 @@ export const product = pgTable("product", {
   deletedAt: timestamp("deleted_at"),
 });
 
-export const productType = pgTable("product_type", {
-  id: text("id").primaryKey(),
+export const productList = pgTable("product", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
+  description: text("description"),
+  price: integer("price").notNull(),
+  stock: integer("stock").notNull().default(0),
+  imageUrl: text("image_url"),
+  productTypeId: text("product_type_id").references(() => productType.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()
@@ -128,13 +133,13 @@ export const accountRelations = relations(account, ({ one }) => ({
   }),
 }));
 
-export const productRelations = relations(product, ({ one }) => ({
-  productType: one(productType, {
-    fields: [product.productType],
-    references: [productType.id],
-  }),
+export const productTypeRelations = relations(productType, ({ many }) => ({
+  products: many(productList),
 }));
 
-export const productTypeRelations = relations(productType, ({ many }) => ({
-  products: many(product),
+export const productListRelations = relations(productList, ({ one }) => ({
+  productType: one(productType, {
+    fields: [productList.productTypeId],
+    references: [productType.id],
+  }),
 }));
