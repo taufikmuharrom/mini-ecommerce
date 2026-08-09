@@ -1580,10 +1580,6 @@ async function updateStatus() {
 - Checkout mengubah banyak tabel sekaligus: insert order, insert order items, kurangi stok, insert history, hapus cart.
 - Di production, sebaiknya bungkus dalam satu transaksi database. Dengan driver Neon HTTP, transaksi mungkin terbatas; pertimbangkan pakai driver `neon` pooling atau `@neondatabase/serverless` transaction mode jika diperlukan.
 
-### 9.5 Payment gateway
-
-Dokumen ini belum mencakup pembayaran. `pending` diasumsikan sebagai "menunggu konfirmasi/konfirmasi manual". Jika nanti ditambahkan payment gateway (Midtrans, Stripe, dll), status bisa diperluas menjadi `awaiting_payment`, `paid`, `payment_failed`, dll.
-
 ---
 
 ## 10. Generate Migration & Seed
@@ -1631,7 +1627,6 @@ Tambahkan seed order contoh di `server/database/seed.ts` kalau ingin langsung pu
 
 ## Next Steps (Phase 4 — Optional)
 
-- Integrasi payment gateway (Midtrans / Stripe / Xendit).
 - Notifikasi email/SMS saat status order berubah.
 - Fitur review & rating produk setelah order `delivered`.
 - Admin dashboard dengan ringkasan penjualan.

@@ -214,7 +214,6 @@ order_item
 
 ## 8. Out of Scope
 
-- Payment gateway & webhook
 - Notifikasi realtime (WebSocket)
 - Chatbot AI/CS
 - Multi-alamat pengiriman
