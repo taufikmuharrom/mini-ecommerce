@@ -33,12 +33,18 @@ interface ProductTypeApiResponse {
 const route = useRoute();
 const router = useRouter();
 
+const ALL_CATEGORIES_VALUE = "all";
+
 const page = ref(Number(route.query.page) || 1);
 const search = ref(String(route.query.q || ""));
-const selectedCategory = ref(String(route.query.category || ""));
+const selectedCategory = ref(String(route.query.category || ALL_CATEGORIES_VALUE));
 
 const { data: categories } = await useFetch<ProductTypeApiResponse>(
   "/api/product-types",
+);
+
+const apiCategory = computed(() =>
+  selectedCategory.value === ALL_CATEGORIES_VALUE ? undefined : selectedCategory.value,
 );
 
 const { data, pending } = await useFetch<ProductListApiResponse>(
@@ -47,7 +53,7 @@ const { data, pending } = await useFetch<ProductListApiResponse>(
     query: {
       page,
       q: search,
-      category: selectedCategory,
+      category: apiCategory,
       limit: 12,
     },
   },
@@ -61,7 +67,7 @@ function applyFilter() {
     query: {
       page: page.value,
       q: search.value || undefined,
-      category: selectedCategory.value || undefined,
+      category: apiCategory.value,
     },
   });
 }
@@ -112,7 +118,7 @@ function applyFilter() {
       <USelect
         v-model="selectedCategory"
         :items="[
-          { label: 'All Categories', value: '' },
+          { label: 'All Categories', value: ALL_CATEGORIES_VALUE },
           ...(categories?.data || []).map((c) => ({
             label: c.name,
             value: c.slug,

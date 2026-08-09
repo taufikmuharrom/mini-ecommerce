@@ -19,21 +19,27 @@ async function handleLogout() {
       <template #right>
         <UButton icon="i-lucide-shopping-cart" variant="ghost" to="/cart" />
 
-        <template v-if="session.data">
-          <UButton
-            v-if="session.data.user.role === 'admin'"
-            label="Admin"
-            to="/admin"
-            variant="ghost"
-            color="error"
-          />
-          <UButton label="Profile" to="/profile" variant="ghost" />
-          <UButton label="Logout" variant="outline" @click="handleLogout" />
-        </template>
-        <template v-else>
-          <UButton label="Login" to="/login" variant="ghost" />
-          <UButton label="Register" to="/register" variant="outline" />
-        </template>
+        <ClientOnly>
+          <template v-if="session.data">
+            <UButton
+              v-if="session.data.user.role === 'admin'"
+              label="Admin"
+              to="/admin"
+              variant="ghost"
+              color="error"
+            />
+            <UButton label="Profile" to="/profile" variant="ghost" />
+            <UButton label="Logout" variant="outline" @click="handleLogout" />
+          </template>
+          <template v-else>
+            <UButton label="Login" to="/login" variant="ghost" />
+            <UButton label="Register" to="/register" variant="outline" />
+          </template>
+          <template #fallback>
+            <UButton label="Login" to="/login" variant="ghost" />
+            <UButton label="Register" to="/register" variant="outline" />
+          </template>
+        </ClientOnly>
       </template>
     </UHeader>
 

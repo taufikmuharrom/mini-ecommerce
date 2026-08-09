@@ -123,9 +123,14 @@ export const productType = pgTable("product_type", {
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .notNull(),
+  deletedAt: timestamp("deleted_at"),
 });
 
-export const productList = pgTable("product_list", {
+export const productList = pgTable("product", {
   id: text("id")
     .primaryKey()
     .$defaultFn(() => crypto.randomUUID()),
@@ -141,6 +146,7 @@ export const productList = pgTable("product_list", {
     .defaultNow()
     .$onUpdate(() => /* @__PURE__ */ new Date())
     .notNull(),
+  deletedAt: timestamp("deleted_at"),
 });
 ```
 
@@ -153,7 +159,9 @@ export const productList = pgTable("product_list", {
 | `price`         | `integer`     | Simpan dalam satuan terkecil (rupiah tanpa koma), misal `Rp 150.000` = `150000`. |
 | `stock`         | `integer`     | Jumlah stok tersedia. Nanti bisa dipakai untuk disable tombol beli.              |
 | `imageUrl`      | `text`        | URL gambar produk. Bisa dari Unsplash, Cloudinary, atau upload sendiri.          |
-| `productTypeId` | `text` FK     | Relasi ke `product_type.id`. `                                                   |
+| `productTypeId` | `text` FK     | Relasi ke `product_type.id`.                                                     |
+| `updatedAt`     | `timestamp`   | Waktu terakhir diupdate. Otomatis di-update oleh Drizzle.                        |
+| `deletedAt`     | `timestamp`   | Nullable. Siap untuk soft-delete di masa depan.                                  |
 
 ### 2.4 Relasi (Relations)
 
@@ -542,12 +550,13 @@ Sebelum masuk API, kita butuh fungsi untuk mengubah nama produk menjadi slug URL
 Buat file `server/utils/slug.ts`:
 
 ```ts
-export function generateSlug(input: string): string {
-  return input
-    .toLowerCase() // Semua huruf jadi kecil
-    .trim() // Hapus spasi di awal/akhir
-    .replace(/[^\w\s-]/g, "") // Hapus karakter selain huruf, angka, spasi, dan strip
-    .replace(/\s+/g, "-"); // Ganti spasi dengan strip
+export function generateSlug(title: string): string {
+  // Baju Anak 2 Tahun Xl
+  return title
+    .toLowerCase() // baju anak 2 tahun
+    .trim() // baju anak 2 tahun
+    .replace(/^-+|-+$/g, "") //
+    .replace(/[^a-z0-9]+/g, "-"); // baju-anak-2-tahun
 }
 
 export async function createUniqueSlug(
@@ -1103,15 +1112,45 @@ Contoh modifikasi pada form create/edit product:
 
 ```vue
 <script setup lang="ts">
+definePageMeta({
+  layout: "admin",
+  middleware: "auth-admin",
+});
+
+interface ProductTypeRef {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+interface Product {
+  id: string;
+  name: string;
+  description?: string;
+  price: number;
+  stock: number;
+  imageUrl?: string;
+  productType?: ProductTypeRef;
+}
+
+interface ProductApiResponse {
+  data: Product;
+}
+
 const route = useRoute();
 const toast = useToast();
 const isEdit = computed(() => route.name !== "admin-products-new");
 const productId = route.params.id as string;
 
 const { data: categories } = await useFetch("/api/product-types");
-const { data: product } = await useFetch(`/api/products/${productId}`, {
-  immediate: isEdit.value,
-});
+const { data: product } = await useFetch<ProductApiResponse>(
+  `/api/products/${productId}`,
+  {
+    immediate: isEdit.value,
+  },
+);
+
+const NO_CATEGORY_VALUE = "__none__";
 
 const state = reactive({
   name: product.value?.data?.name || "",
@@ -1119,7 +1158,7 @@ const state = reactive({
   price: product.value?.data?.price || 0,
   stock: product.value?.data?.stock || 0,
   imageUrl: product.value?.data?.imageUrl || "",
-  productTypeId: product.value?.data?.productType?.id || "",
+  productTypeId: product.value?.data?.productType?.id || NO_CATEGORY_VALUE,
 });
 
 const uploadingImage = ref(false);
@@ -1155,6 +1194,10 @@ async function onImageSelect(event: Event) {
 async function onSubmit() {
   const body = { ...state };
 
+  if (body.productTypeId === NO_CATEGORY_VALUE) {
+    body.productTypeId = undefined;
+  }
+
   if (isEdit.value) {
     await $fetch(`/api/products/${productId}`, { method: "PUT", body });
   } else {
@@ -1173,8 +1216,24 @@ async function onSubmit() {
       </h1>
     </template>
 
-    <UForm :state="state" @submit="onSubmit" class="space-y-4">
-      <!-- ... field lainnya ... -->
+    <UForm :state="state" class="space-y-4" @submit="onSubmit">
+      <UFormField label="Name" name="name">
+        <UInput v-model="state.name" class="w-full" />
+      </UFormField>
+
+      <UFormField label="Description" name="description">
+        <UTextarea v-model="state.description" class="w-full" />
+      </UFormField>
+
+      <div class="grid grid-cols-2 gap-4">
+        <UFormField label="Price" name="price">
+          <UInputNumber v-model="state.price" :min="0" class="w-full" />
+        </UFormField>
+
+        <UFormField label="Stock" name="stock">
+          <UInputNumber v-model="state.stock" :min="0" class="w-full" />
+        </UFormField>
+      </div>
 
       <UFormField label="Product Image" name="imageUrl">
         <div class="space-y-2 w-full">
@@ -1197,11 +1256,23 @@ async function onSubmit() {
             :src="state.imageUrl"
             alt="Preview"
             class="w-32 h-32 object-cover rounded-md border"
-          />
+          >
         </div>
       </UFormField>
 
-      <!-- ... field lainnya ... -->
+      <UFormField label="Category" name="productTypeId">
+        <USelect
+          v-model="state.productTypeId"
+          :items="[
+            { label: 'No Category', value: NO_CATEGORY_VALUE },
+            ...(categories?.data || []).map((c) => ({
+              label: c.name,
+              value: c.id,
+            })),
+          ]"
+          class="w-full"
+        />
+      </UFormField>
 
       <div class="flex justify-end gap-2 pt-4">
         <UButton label="Cancel" variant="ghost" to="/admin/products" />
@@ -1217,6 +1288,7 @@ async function onSubmit() {
 - `imageUrl` yang disimpan di database adalah public URL dari R2.
 - Validasi tipe dan ukuran file ada di server. Validasi di frontend hanya UX, jangan dijadikan keamanan.
 - Jangan menyimpan credential R2 di browser atau mengirimkannya sebagai response.
+- Pilihan "No Category" menggunakan nilai khusus `__none__` karena Nuxt UI v4 / Reka UI tidak mengizinkan value kosong pada `USelect`. Nilai tersebut dikonversi menjadi `undefined` sebelum dikirim ke API, sehingga database menyimpan `NULL`.
 
 ---
 
