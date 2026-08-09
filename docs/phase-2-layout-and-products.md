@@ -2137,21 +2137,169 @@ function addToCart() {
 
 ## 8. UI Admin — Product Management
 
-### 8.1 Halaman admin product list
+File: `app/pages/admin/products/index.vue`
 
-File baru: `app/pages/admin/products/index.vue`
+Halaman admin product menggabungkan **list produk** dan **form create/edit** dalam satu halaman. Form create/edit ditampilkan melalui modal (`UModal`) alih-alih halaman terpisah.
+
+Alasan menggunakan modal:
+- UX lebih cepat: admin tidak perlu pindah halaman untuk edit.
+- Lebih sedikit file page yang perlu dikelola.
+- CRUD product tetap utuh: create, read, update, delete.
 
 ```vue
 <script setup lang="ts">
+import * as z from "zod";
+
 definePageMeta({
   layout: "admin",
   middleware: "auth-admin",
 });
 
+interface ProductTypeRef {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+interface Product {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  price: number;
+  stock: number;
+  imageUrl?: string;
+  productType?: ProductTypeRef | null;
+}
+
+const NO_CATEGORY_VALUE = "__none__";
+
+const schema = z.object({
+  name: z.string().min(1, "Name is required"),
+  price: z.number().min(0, "Price must be a positive number"),
+  stock: z.number().min(0, "Stock must be a positive number"),
+  description: z.string().optional(),
+  imageUrl: z.string().url().optional().or(z.literal("")),
+  productTypeId: z
+    .union([z.string().uuid(), z.literal(NO_CATEGORY_VALUE)])
+    .optional(),
+});
+
+type Schema = z.output<typeof schema>;
+
+const isModalOpen = ref(false);
+const editingId = ref<string | null>(null);
+const uploadingImage = ref(false);
+
+const state = reactive<Schema>({
+  name: "",
+  price: 0,
+  stock: 0,
+  description: "",
+  imageUrl: "",
+  productTypeId: NO_CATEGORY_VALUE,
+});
+
 const toast = useToast();
-const { data, refresh } = await useFetch("/api/products", {
+const { data: products, refresh } = await useFetch("/api/products", {
   query: { limit: 100 },
 });
+const { data: categories } = await useFetch("/api/product-types");
+
+const productTypeItems = computed(() => [
+  { label: "No Category", value: NO_CATEGORY_VALUE },
+  ...(categories.value?.data || []).map((c: ProductTypeRef) => ({
+    label: c.name,
+    value: c.id,
+  })),
+]);
+
+function resetForm() {
+  editingId.value = null;
+  state.name = "";
+  state.price = 0;
+  state.stock = 0;
+  state.description = "";
+  state.imageUrl = "";
+  state.productTypeId = NO_CATEGORY_VALUE;
+}
+
+function openCreateModal() {
+  resetForm();
+  isModalOpen.value = true;
+}
+
+function editProduct(product: Product) {
+  editingId.value = product.id;
+  state.name = product.name;
+  state.price = product.price;
+  state.stock = product.stock;
+  state.description = product.description || "";
+  state.imageUrl = product.imageUrl || "";
+  state.productTypeId = product.productType?.id ?? NO_CATEGORY_VALUE;
+  isModalOpen.value = true;
+}
+
+async function onImageSelect(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+
+  uploadingImage.value = true;
+
+  try {
+    const formData = new FormData();
+    formData.append("image", file);
+
+    const { url } = await $fetch("/api/upload/image", {
+      method: "POST",
+      body: formData,
+    });
+
+    state.imageUrl = url;
+    toast.add({ title: "Image uploaded", color: "success" });
+  } catch (err: any) {
+    toast.add({
+      title: err?.data?.statusMessage || "Image upload failed",
+      color: "error",
+    });
+  } finally {
+    uploadingImage.value = false;
+  }
+}
+
+async function onSubmit() {
+  const body = { ...state };
+
+  if (body.productTypeId === NO_CATEGORY_VALUE) {
+    body.productTypeId = undefined;
+  }
+
+  try {
+    if (editingId.value) {
+      await $fetch(`/api/products/${editingId.value}`, {
+        method: "PUT",
+        body,
+      });
+      toast.add({ title: "Product updated", color: "success" });
+    } else {
+      await $fetch("/api/products", {
+        method: "POST",
+        body,
+      });
+      toast.add({ title: "Product created", color: "success" });
+    }
+
+    isModalOpen.value = false;
+    resetForm();
+    refresh();
+  } catch (err: any) {
+    toast.add({
+      title: err?.data?.statusMessage || "Failed to save product",
+      color: "error",
+    });
+  }
+}
 
 async function deleteProduct(id: string) {
   if (!confirm("Are you sure?")) return;
@@ -2166,58 +2314,140 @@ async function deleteProduct(id: string) {
   <div class="space-y-6">
     <div class="flex items-center justify-between">
       <h1 class="text-2xl font-bold">Products</h1>
-      <UButton label="Add Product" to="/admin/products/new" />
+      <UButton label="Add Product" @click="openCreateModal" />
     </div>
 
     <UTable
-      :rows="data?.data || []"
+      :data="products?.data || []"
       :columns="[
-        { key: 'name', label: 'Name' },
-        { key: 'price', label: 'Price' },
-        { key: 'stock', label: 'Stock' },
-        { key: 'actions', label: 'Actions' },
+        { accessorKey: 'name', header: 'Name' },
+        { accessorKey: 'price', header: 'Price' },
+        { accessorKey: 'stock', header: 'Stock' },
+        { accessorKey: 'actions', header: 'Actions' },
       ]"
     >
-      <template #price-data="{ row }">
-        Rp {{ row.price.toLocaleString("id-ID") }}
+      <template #price-cell="{ row }">
+        Rp {{ (row as any).getValue("price").toLocaleString("id-ID") }}
       </template>
 
-      <template #actions-data="{ row }">
+      <template #actions-cell="{ row }">
         <div class="flex gap-2">
           <UButton
             icon="i-lucide-pencil"
             variant="ghost"
-            :to="`/admin/products/${row.id}/edit`"
+            @click="editProduct((row as any).original as Product)"
           />
+
           <UButton
             icon="i-lucide-trash"
             color="error"
             variant="ghost"
-            @click="deleteProduct(row.id)"
+            @click="deleteProduct((row as any).original.id)"
           />
         </div>
       </template>
     </UTable>
+
+    <UModal
+      v-model:open="isModalOpen"
+      :title="editingId ? 'Edit Product' : 'Add Product'"
+      :description="
+        editingId
+          ? 'Update the product details below.'
+          : 'Fill in the details to create a new product.'
+      "
+    >
+      <template #body>
+        <UForm
+          :schema="schema"
+          :state="state"
+          class="space-y-4 w-full"
+          @submit="onSubmit"
+        >
+          <UFormField label="Name" name="name">
+            <UInput v-model="state.name" class="w-full" />
+          </UFormField>
+
+          <div class="grid grid-cols-2 gap-4">
+            <UFormField label="Price" name="price">
+              <UInputNumber
+                v-model="state.price"
+                :min="0"
+                :increment="false"
+                :decrement="false"
+                class="w-full"
+              />
+            </UFormField>
+
+            <UFormField label="Stock" name="stock">
+              <UInputNumber v-model="state.stock" :min="0" class="w-full" />
+            </UFormField>
+          </div>
+
+          <UFormField label="Description" name="description">
+            <UTextarea v-model="state.description" class="w-full" />
+          </UFormField>
+
+          <UFormField label="Product Image" name="imageUrl">
+            <div class="space-y-2 w-full">
+              <UInput
+                type="file"
+                accept="image/*"
+                :disabled="uploadingImage"
+                @change="onImageSelect"
+              />
+
+              <UInput
+                v-model="state.imageUrl"
+                placeholder="Image URL will appear here after upload"
+                class="w-full"
+                disabled
+              />
+
+              <img
+                v-if="state.imageUrl"
+                :src="state.imageUrl"
+                alt="Preview"
+                class="w-32 h-32 object-cover rounded-md border"
+              />
+            </div>
+          </UFormField>
+
+          <UFormField label="Category" name="productTypeId">
+            <USelect
+              v-model="state.productTypeId"
+              :items="productTypeItems"
+              class="w-full"
+            />
+          </UFormField>
+
+          <div class="flex justify-end gap-2 pt-4">
+            <UButton
+              label="Cancel"
+              variant="ghost"
+              @click="
+                () => {
+                  isModalOpen = false;
+                  resetForm();
+                }
+              "
+            />
+            <UButton type="submit" :label="editingId ? 'Update' : 'Save'" />
+          </div>
+        </UForm>
+      </template>
+    </UModal>
   </div>
 </template>
 ```
 
-### 8.2 Halaman create/edit product
+---
 
-File baru:
+## 8.2 UI Admin — Product Type Management
 
-- `app/pages/admin/products/new.vue`
-- `app/pages/admin/products/[id]/edit.vue`
+File: `app/pages/admin/product-types/index.vue`
 
-Gunakan `UForm`, `UInput`, `UInputNumber`, `UTextarea`, `USelect`, dan `UButton` dari Nuxt UI.
-
-Flow form:
-
-1. Ambil daftar product type dari `GET /api/product-types`.
-2. Saat submit, kirim ke `POST /api/products` atau `PUT /api/products/:id`.
-3. Setelah sukses, `navigateTo('/admin/products')`.
-
-Contoh form skeleton:
+Sama seperti product, management product type juga menggunakan **modal inline** di halaman list.
 
 ```vue
 <script setup lang="ts">
@@ -2226,88 +2456,111 @@ definePageMeta({
   middleware: "auth-admin",
 });
 
-const route = useRoute();
-const isEdit = computed(() => route.name !== "admin-products-new");
-const productId = route.params.id as string;
+const toast = useToast();
+const editingId = ref<string | null>(null);
 
-const { data: categories } = await useFetch("/api/product-types");
-const { data: product } = await useFetch(`/api/products/${productId}`, {
-  immediate: isEdit.value,
-});
+const { data, refresh } = await useFetch("/api/product-types");
 
 const state = reactive({
-  name: product.value?.data?.name || "",
-  description: product.value?.data?.description || "",
-  price: product.value?.data?.price || 0,
-  stock: product.value?.data?.stock || 0,
-  imageUrl: product.value?.data?.imageUrl || "",
-  productTypeId: product.value?.data?.productType?.id || "",
+  name: "",
 });
 
+function resetForm() {
+  editingId.value = null;
+  state.name = "";
+}
+
+function editType(type: { id: string; name: string }) {
+  editingId.value = type.id;
+  state.name = type.name;
+}
+
 async function onSubmit() {
-  const body = { ...state };
+  try {
+    if (editingId.value) {
+      await $fetch(`/api/product-types/${editingId.value}`, {
+        method: "PUT",
+        body: { name: state.name },
+      });
+      toast.add({ title: "Product type updated", color: "success" });
+    } else {
+      await $fetch("/api/product-types", {
+        method: "POST",
+        body: { name: state.name },
+      });
+      toast.add({ title: "Product type created", color: "success" });
+    }
 
-  if (isEdit.value) {
-    await $fetch(`/api/products/${productId}`, { method: "PUT", body });
-  } else {
-    await $fetch("/api/products", { method: "POST", body });
+    resetForm();
+    refresh();
+  } catch (err: any) {
+    toast.add({
+      title: err?.data?.statusMessage || "Failed to save product type",
+      color: "error",
+    });
   }
+}
 
-  navigateTo("/admin/products");
+async function deleteType(id: string) {
+  if (!confirm("Are you sure?")) return;
+
+  await $fetch(`/api/product-types/${id}`, { method: "DELETE" });
+  toast.add({ title: "Product type deleted", color: "success" });
+  refresh();
 }
 </script>
 
 <template>
-  <UCard class="max-w-2xl">
-    <template #header>
-      <h1 class="text-xl font-bold">
-        {{ isEdit ? "Edit" : "Create" }} Product
-      </h1>
-    </template>
+  <div class="space-y-6">
+    <h1 class="text-2xl font-bold">Product Types</h1>
 
-    <UForm :state="state" @submit="onSubmit" class="space-y-4">
-      <UFormField label="Name" name="name">
-        <UInput v-model="state.name" class="w-full" />
-      </UFormField>
-
-      <UFormField label="Description" name="description">
-        <UTextarea v-model="state.description" class="w-full" />
-      </UFormField>
-
-      <div class="grid grid-cols-2 gap-4">
-        <UFormField label="Price" name="price">
-          <UInputNumber v-model="state.price" :min="0" class="w-full" />
+    <UCard class="max-w-2xl">
+      <UForm :state="state" class="flex gap-4 items-end" @submit="onSubmit">
+        <UFormField
+          :label="editingId ? 'Edit Name' : 'New Type Name'"
+          name="name"
+          class="flex-1"
+        >
+          <UInput v-model="state.name" class="w-full" />
         </UFormField>
 
-        <UFormField label="Stock" name="stock">
-          <UInputNumber v-model="state.stock" :min="0" class="w-full" />
-        </UFormField>
-      </div>
+        <div class="flex gap-2">
+          <UButton
+            v-if="editingId"
+            label="Cancel"
+            variant="ghost"
+            @click="resetForm"
+          />
+          <UButton type="submit" :label="editingId ? 'Update' : 'Add'" />
+        </div>
+      </UForm>
+    </UCard>
 
-      <UFormField label="Image URL" name="imageUrl">
-        <UInput v-model="state.imageUrl" class="w-full" />
-      </UFormField>
-
-      <UFormField label="Category" name="productTypeId">
-        <USelect
-          v-model="state.productTypeId"
-          :items="[
-            { label: 'No Category', value: '' },
-            ...(categories?.data || []).map((c) => ({
-              label: c.name,
-              value: c.id,
-            })),
-          ]"
-          class="w-full"
-        />
-      </UFormField>
-
-      <div class="flex justify-end gap-2 pt-4">
-        <UButton label="Cancel" variant="ghost" to="/admin/products" />
-        <UButton type="submit" label="Save" />
-      </div>
-    </UForm>
-  </UCard>
+    <UTable
+      :data="data?.data || []"
+      :columns="[
+        { accessorKey: 'name', header: 'Name' },
+        { accessorKey: 'slug', header: 'Slug' },
+        { accessorKey: 'actions', header: 'Actions' },
+      ]"
+    >
+      <template #actions-cell="{ row }">
+        <div class="flex gap-2">
+          <UButton
+            icon="i-lucide-pencil"
+            variant="ghost"
+            @click="editType((row as any).original as { id: string; name: string })"
+          />
+          <UButton
+            icon="i-lucide-trash"
+            color="error"
+            variant="ghost"
+            @click="deleteType((row as any).original.id)"
+          />
+        </div>
+      </template>
+    </UTable>
+  </div>
 </template>
 ```
 

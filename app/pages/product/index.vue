@@ -39,6 +39,14 @@ const page = ref(Number(route.query.page) || 1);
 const search = ref(String(route.query.q || ""));
 const selectedCategory = ref(String(route.query.category || ALL_CATEGORIES_VALUE));
 
+const { data: categories } = await useFetch<ProductTypeApiResponse>(
+  "/api/product-types",
+);
+
+const apiCategory = computed(() =>
+  selectedCategory.value === ALL_CATEGORIES_VALUE ? undefined : selectedCategory.value,
+);
+
 const { data, refresh, pending } = await useFetch<ProductListApiResponse>(
   "/api/products",
   {
@@ -49,14 +57,6 @@ const { data, refresh, pending } = await useFetch<ProductListApiResponse>(
       limit: 12,
     },
   },
-);
-
-const { data: categories } = await useFetch<ProductTypeApiResponse>(
-  "/api/product-types",
-);
-
-const apiCategory = computed(() =>
-  selectedCategory.value === ALL_CATEGORIES_VALUE ? undefined : selectedCategory.value,
 );
 
 function applyFilter() {

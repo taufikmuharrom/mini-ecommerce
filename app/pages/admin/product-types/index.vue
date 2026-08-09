@@ -46,9 +46,16 @@ function cancelEdit() {
 async function deleteType(id: string) {
   if (!confirm("Are you sure?")) return;
 
-  await $fetch(`/api/product-types/${id}`, { method: "DELETE" });
-  toast.add({ title: "Product type deleted", color: "success" });
-  refresh();
+  try {
+    await $fetch(`/api/product-types/${id}`, { method: "DELETE" });
+    toast.add({ title: "Product type deleted", color: "success" });
+    refresh();
+  } catch (err: any) {
+    toast.add({
+      title: err?.data?.statusMessage || "Failed to delete product type",
+      color: "error",
+    });
+  }
 }
 </script>
 
