@@ -250,9 +250,8 @@ async function deleteProduct(id: string) {
 
               <UInput
                 v-model="state.imageUrl"
-                placeholder="Image URL will appear here after upload"
+                placeholder="Or paste an image URL here"
                 class="w-full"
-                disabled
               />
 
               <img

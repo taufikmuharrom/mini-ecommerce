@@ -37,14 +37,17 @@ const ALL_CATEGORIES_VALUE = "all";
 
 const page = ref(Number(route.query.page) || 1);
 const search = ref(String(route.query.q || ""));
-const selectedCategory = ref(String(route.query.category || ALL_CATEGORIES_VALUE));
-
-const { data: categories } = await useFetch<ProductTypeApiResponse>(
-  "/api/product-types",
+const selectedCategory = ref(
+  String(route.query.category || ALL_CATEGORIES_VALUE),
 );
 
+const { data: categories } =
+  await useFetch<ProductTypeApiResponse>("/api/product-types");
+
 const apiCategory = computed(() =>
-  selectedCategory.value === ALL_CATEGORIES_VALUE ? undefined : selectedCategory.value,
+  selectedCategory.value === ALL_CATEGORIES_VALUE
+    ? undefined
+    : selectedCategory.value,
 );
 
 const { data, pending } = await useFetch<ProductListApiResponse>(
@@ -83,16 +86,18 @@ function applyFilter() {
       <div class="grid md:grid-cols-2 gap-6 p-8">
         <img
           :src="
-            featuredProduct.imageUrl || 'https://placehold.co/600x400?text=No+Image'
+            featuredProduct.imageUrl ||
+            'https://placehold.co/600x400?text=No+Image'
           "
           alt=""
           class="w-full h-64 object-cover rounded-xl"
-        >
+        />
 
         <div class="flex flex-col justify-center space-y-4">
           <UBadge
             v-if="featuredProduct.productType"
             :label="featuredProduct.productType.name"
+            class="w-fit"
           />
           <h1 class="text-4xl font-bold">{{ featuredProduct.name }}</h1>
           <p class="text-muted line-clamp-3">
@@ -101,6 +106,7 @@ function applyFilter() {
           <UButton
             :to="`/product/${featuredProduct.slug}`"
             label="View Product"
+            class="w-fit"
           />
         </div>
       </div>
@@ -151,8 +157,10 @@ function applyFilter() {
               "
               alt=""
               class="w-full h-48 object-cover rounded-md mb-4"
+            />
+            <h2
+              class="font-semibold group-hover:text-primary transition-colors"
             >
-            <h2 class="font-semibold group-hover:text-primary transition-colors">
               {{ product.name }}
             </h2>
             <p class="text-sm text-muted line-clamp-2">

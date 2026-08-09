@@ -6,6 +6,7 @@ definePageMeta({
 
 const toast = useToast();
 const editingId = ref<string | null>(null);
+const deletingId = ref<string | null>(null);
 
 const { data, refresh } = await useFetch("/api/product-types");
 
@@ -46,15 +47,19 @@ function cancelEdit() {
 async function deleteType(id: string) {
   if (!confirm("Are you sure?")) return;
 
+  deletingId.value = id;
+
   try {
     await $fetch(`/api/product-types/${id}`, { method: "DELETE" });
     toast.add({ title: "Product type deleted", color: "success" });
-    refresh();
+    await refresh();
   } catch (err: any) {
     toast.add({
       title: err?.data?.statusMessage || "Failed to delete product type",
       color: "error",
     });
+  } finally {
+    deletingId.value = null;
   }
 }
 </script>
@@ -104,6 +109,7 @@ async function deleteType(id: string) {
             icon="i-lucide-trash"
             color="error"
             variant="ghost"
+            :loading="deletingId === (row as any).original.id"
             @click="deleteType((row as any).original.id)"
           />
         </div>

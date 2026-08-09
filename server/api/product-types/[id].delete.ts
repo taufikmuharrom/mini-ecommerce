@@ -21,13 +21,21 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, statusMessage: "Product type not found" });
   }
 
-  // Lepaskan produk dari kategori ini supaya foreign key tidak melarang penghapusan
-  await db
-    .update(productList)
-    .set({ productTypeId: null })
-    .where(eq(productList.productTypeId, id));
+  try {
+    // Lepaskan produk dari kategori ini supaya foreign key tidak melarang penghapusan
+    await db
+      .update(productList)
+      .set({ productTypeId: null })
+      .where(eq(productList.productTypeId, id));
 
-  await db.delete(productType).where(eq(productType.id, id));
+    await db.delete(productType).where(eq(productType.id, id));
+  } catch (err) {
+    console.error("Failed to delete product type:", err);
+    throw createError({
+      statusCode: 500,
+      statusMessage: "Failed to delete product type",
+    });
+  }
 
   return { message: "Product type deleted" };
 });

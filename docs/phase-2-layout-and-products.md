@@ -1688,6 +1688,8 @@ Untuk dropdown kategori di form product dan untuk filter di user, kita butuh end
 
 Strukturnya mirip CRUD product, hanya saja tabelnya `productType`. Bisa dibuat di folder `server/api/product-types/`.
 
+> **Catatan delete:** sebelum menghapus kategori, produk yang masih merujuk ke kategori tersebut diubah `productTypeId`-nya menjadi `null`. Dengan begitu penghapusan kategori tidak ditolak oleh foreign key constraint.
+
 ---
 
 ## 7. UI User — Product List & Product Detail
